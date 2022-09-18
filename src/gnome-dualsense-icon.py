@@ -11,21 +11,26 @@ from gi.repository import GLib
 import time
 from threading import Thread
 
-#example: /sys/devices/pci0000:00/0000:00:08.1/0000:05:00.3/usb1/1-2/1-2.2/1-2.2:1.3/0003:054C:0CE6.0005/power_supply/ps-controller-battery-7c:66:ef:4f:79:
-battery = subprocess.check_output(["find", "/sys/devices/","-name","ps-controller-battery*"]).decode("utf-8").strip()
-print("Battery info location: "+battery)
 refresh_time_sec=10
-
+default_label="--%"
+default_desc="Battery status and level"
 class Indicator():
     def __init__(self):
         self.indicator = appindicator.Indicator.new("Dualsense battery", 'input-gaming', appindicator.IndicatorCategory.APPLICATION_STATUS)
         self.indicator.set_status(appindicator.IndicatorStatus.ACTIVE)
-        self.indicator.set_label("--%", "Battery status and level")
+        self.indicator.set_label(default_label, default_desc)
         self.indicator.set_menu(self.create_menu())
 
         self.update = Thread(target=self.get_time)
         self.update.daemon=True
         self.update.start()
+
+    def refresh_baterry_path(self):
+        try:
+            self.battery_path
+        except AttributeError:
+            #example: /sys/devices/pci0000:00/0000:00:08.1/0000:05:00.3/usb1/1-2/1-2.2/1-2.2:1.3/0003:054C:0CE6.0005/power_supply/ps-controller-battery-7c:66:ef:4f:79:
+            self.battery_path = subprocess.check_output(["find", "/sys/devices/","-name","ps-controller-battery*"]).decode("utf-8").strip()
 
     def get_time(self):
       loop = 0
@@ -46,11 +51,14 @@ class Indicator():
 
     def update_capacity(self, indicator):
         try:
-            f = open(f"{battery}/capacity")
-            status_file = open(f"{battery}/status")
+            self.refresh_baterry_path()
+            f = open(f"{self.battery_path}/capacity")
+            status_file = open(f"{self.battery_path}/status")
+            #print("Battery info location: " + self.battery_path)
         except FileNotFoundError:
-            print("ERROR: Your controller can't be detected.")
-            sys.exit()
+            #print("ERROR: Your controller can't be detected, refresh planned.")
+            del self.battery_path
+            indicator.set_label(default_label,default_desc)
         else:
             battery_percentage_left = f.readline().strip()
             status = status_file.readline().strip()
