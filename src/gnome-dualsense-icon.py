@@ -18,7 +18,7 @@ refresh_time_sec=10
 
 class Indicator():
     def __init__(self):
-        self.indicator = appindicator.Indicator.new("Dualsense battery", os.path.abspath('gamepad-icon.png'), appindicator.IndicatorCategory.APPLICATION_STATUS)
+        self.indicator = appindicator.Indicator.new("Dualsense battery", 'input-gaming', appindicator.IndicatorCategory.APPLICATION_STATUS)
         self.indicator.set_status(appindicator.IndicatorStatus.ACTIVE)
         self.indicator.set_label("--%", "Battery status and level")
         self.indicator.set_menu(self.create_menu())
