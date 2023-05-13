@@ -6,4 +6,4 @@
 4. Switching displays if steam started in Big Picture mode and back if Big Picture mode closed
 5. Start steam by gamepad key pressing if Steam was stopped
 
-Al settings in script variables inside .py
+All settings in script variables inside .py
