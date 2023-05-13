@@ -179,17 +179,7 @@ class Indicator():
 class SteamWatcher():
     def __init__(self):
         self.display_switcher = CommandsRunner()
-        self.steam_process = None
-        self.steam_window_name = 'steam'
-        self.steam_window_class = ('Steam', 'Steam')
-        self.big_picture_window_class = ('steam', 'Steam')
-        self.last_time_window = self.steam_window_class
-
-        self.gamepad_device = self.find_gamepad_by_name()
-        print(f"Your gamepad device '{self.gamepad_device}'")
-
-        if not self.gamepad_device:
-                raise Exception(f"Gamepad device '{default_gamepad_name}' not found")  
+        self.last_time_window = None
 
         self.gamepad_events_watcher = Thread(target=self.watch_keys)
         self.gamepad_events_watcher.daemon=True
@@ -215,7 +205,11 @@ class SteamWatcher():
     def watch_keys(self):
         while True:
             try:
-                gamepad = evdev.InputDevice(self.gamepad_device)
+                gamepad_device = self.find_gamepad_by_name()
+                if not gamepad_device:
+                        raise Exception(f"Gamepad device {default_gamepad_name} not found")  
+                print(f"Found gamepad device path '{gamepad_device}'")
+                gamepad = evdev.InputDevice(gamepad_device)
                 for event in gamepad.read_loop():
                     if event.type == evdev.ecodes.KEY_ESC and event.value == 1 and self.is_active_display(default_main_screen):
                         self.display_switcher.switch_to_second_display()
