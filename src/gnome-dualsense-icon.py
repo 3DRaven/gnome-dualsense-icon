@@ -48,6 +48,7 @@ command_steam_start = "env GDK_SCALE=2 /usr/bin/steam -silent -oldbigpicture"
 
 class CommandsRunner():
     def __init__(self):
+        self.steam_process = None
         pass
 
     def run_and_wait(self,command):
@@ -101,6 +102,12 @@ class CommandsRunner():
     def start_steam(self): 
         print("Starting steam")
         self.steam_process = self.just_run(command_steam_start)
+
+    def is_active_display(self,display_name):
+        active_monitor_model = Gdk.Display.get_default().get_primary_monitor().get_model()
+        print(f"Active monitor model {active_monitor_model}")
+        return active_monitor_model == display_name
+
 class Indicator():
     def __init__(self):
         self.indicator = appindicator.Indicator.new("Dualsense battery", 'input-gaming', appindicator.IndicatorCategory.APPLICATION_STATUS)
@@ -178,7 +185,7 @@ class Indicator():
 
 class SteamWatcher():
     def __init__(self):
-        self.display_switcher = CommandsRunner()
+        self.commamd_runner = CommandsRunner()
         self.last_time_window = None
 
         self.gamepad_events_watcher = Thread(target=self.watch_keys)
@@ -211,11 +218,11 @@ class SteamWatcher():
                 print(f"Found gamepad device path '{gamepad_device}'")
                 gamepad = evdev.InputDevice(gamepad_device)
                 for event in gamepad.read_loop():
-                    if event.type == evdev.ecodes.KEY_ESC and event.value == 1 and self.is_active_display(default_main_screen):
-                        self.display_switcher.switch_to_second_display()
+                    if event.type == evdev.ecodes.KEY_ESC and event.value == 1 and self.commamd_runner.is_active_display(default_main_screen):
+                        self.commamd_runner.switch_to_second_display()
                         
                         if not self.is_steam_running():
-                            self.start_steam()
+                            self.commamd_runner.start_steam()
                         else:
                             print("Steam already started")
             except Exception as e:
@@ -227,11 +234,6 @@ class SteamWatcher():
 
     def is_steam_big_picture_window(self,class_name):
         return class_name == 'steam'
-
-    def is_active_display(self,display_name):
-        active_monitor_model = Gdk.Display.get_default().get_primary_monitor().get_model()
-        print(f"Active monitor model {active_monitor_model}")
-        return active_monitor_model == display_name
         
     def watch_steam(self):
         gtk.init([])
@@ -240,7 +242,7 @@ class SteamWatcher():
         
         def do_window_opened(this_screen: Wnck.Screen, opened_window: Wnck.Window):
                 instance_class_name = opened_window.get_class_instance_name()
-                if self.is_steam_main_window(instance_class_name) and self.last_time_window != instance_class_name and self.is_active_display(default_main_screen):
+                if self.is_steam_main_window(instance_class_name) and self.last_time_window != instance_class_name and self.commamd_runner.is_active_display(default_main_screen):
                     print("Opened main steam window on main display")
                     opened_window.activate(True)
                     opened_window.maximize ()
@@ -257,9 +259,9 @@ class SteamWatcher():
                     print("Closed main steam window")
                 if self.is_steam_big_picture_window(instance_class_name):
                     print("Closed Big Picture steam window")
-                if self.is_steam_big_picture_window(instance_class_name) and self.is_active_display(default_tv_screen):
+                if self.is_steam_big_picture_window(instance_class_name) and self.commamd_runner.is_active_display(default_tv_screen):
                     print("Big Picture steam window closed on second display")
-                    self.display_switcher.switch_to_first_display()
+                    self.commamd_runner.switch_to_first_display()
                     
         screen.connect('window-opened', do_window_opened)
         screen.connect('window-closed', do_window_closed)
@@ -305,8 +307,13 @@ class GamepadWatcher():
             self.reconnect_gamepad(1)
             time.sleep(gamepad_rescan_sec)
 
-Indicator()
-SteamWatcher()
-GamepadWatcher()
-signal.signal(signal.SIGINT, signal.SIG_DFL)
-gtk.main()
+def main():
+    Indicator()
+    SteamWatcher()
+    GamepadWatcher()
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    gtk.main()
+
+# Проверяем, является ли данный файл основным исполняемым файлом
+if __name__ == "__main__":
+    main()
