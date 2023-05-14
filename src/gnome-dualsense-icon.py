@@ -269,17 +269,17 @@ class SteamWatcher():
 #Reconnecting gamepad process in Ubuntu has some problems, so we need to reconnect it periodically
 class GamepadWatcher():
     def __init__(self):
+        self.dbus = SystemBus()
+        self.manager = self.dbus.get('org.bluez', '/')
+        # self.adapter = bus.get('org.bluez','/org/bluez/hci0')
+        self.devices = self.manager.GetManagedObjects()
+        
         self.gamepad_watcher = Thread(target=self.scan_devices)
         self.gamepad_watcher.daemon=True
         self.gamepad_watcher.start()
 
     def reconnect_gamepad(self,adapter_index):
-        bus = SystemBus()
-        manager = bus.get('org.bluez', '/')
-        # adapter = bus.get('org.bluez','/org/bluez/hci0')
-        devices = manager.GetManagedObjects()
-        
-        second_adapter_devices = [devices[device_path] for device_path in devices if f"hci{adapter_index}" in device_path]
+        second_adapter_devices = [self.devices[device_path] for device_path in self.devices if f"hci{adapter_index}" in device_path]
 
         for device in second_adapter_devices:
             if 'org.bluez.Device1' in device: 
@@ -294,7 +294,7 @@ class GamepadWatcher():
                         try:
                             print(f"Try to connect device {device_name}")
                             device_path = f"{device_adapter}/dev_{device_address.replace(':', '_')}"
-                            device = bus.get('org.bluez',device_path)
+                            device = self.dbus.get('org.bluez',device_path)
                             device.Connect()
                             print(f"Device {device_name} connected")
                             print(f"Device name {device_name} adapter {device_adapter} address {device_address} paired {device_paired} connected {device_connected}")
