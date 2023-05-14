@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-print(f"Please check that this packages installed in your systyem [python3-pydbus,python3-evdev]")
+print(f"Please check that this packages installed in your systyem [python3-pydbus,python3-evdev,xdotool]")
 
 import signal
 import subprocess
