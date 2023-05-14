@@ -21,7 +21,7 @@ from pydbus import SystemBus #apt-get install python3-pydbus
 
 battery_refresh_time_sec=10 #rescan battery of gamepad time
 waiting_second_display_sec=10 #waiting to turning on second display time
-gamepad_rescan_sec=1 #reconnection to gamepad time and key pressed scanner restart time
+gamepad_rescan_sec=3 #reconnection to gamepad time and key pressed scanner restart time
 default_label="--%"
 default_desc="Battery status and level"
 
@@ -46,7 +46,7 @@ command_display_first_off = f"xrandr --output {default_main_screen} --off"
 #start steam in old big picture mode, because new big picture has some glitches
 command_steam_start = "env GDK_SCALE=2 /usr/bin/steam -silent -oldbigpicture"
 
-class CommandsRunner():
+class CommandsRunner:
     def __init__(self):
         self.steam_process = None
         pass
@@ -108,7 +108,7 @@ class CommandsRunner():
         print(f"Active monitor model {active_monitor_model}")
         return active_monitor_model == display_name
 
-class Indicator():
+class Indicator:
     def __init__(self):
         self.indicator = appindicator.Indicator.new("Dualsense battery", 'input-gaming', appindicator.IndicatorCategory.APPLICATION_STATUS)
         self.indicator.set_status(appindicator.IndicatorStatus.ACTIVE)
@@ -162,7 +162,7 @@ class Indicator():
     def update_capacity(self, indicator):
         try:
             self.refresh_baterry_path()
-            f = open(f"{self.battery_path}/capacity")
+            capacity_file = open(f"{self.battery_path}/capacity")
             status_file = open(f"{self.battery_path}/status")
             #print("Battery info location: " + self.battery_path)
         except FileNotFoundError:
@@ -170,7 +170,7 @@ class Indicator():
             del self.battery_path
             indicator.set_label(default_label,default_desc)
         else:
-            battery_percentage_left = f.readline().strip()
+            battery_percentage_left = capacity_file.readline().strip()
             status = status_file.readline().strip()
             
             if status == "Charging":
@@ -180,10 +180,10 @@ class Indicator():
             else:
                 label = battery_percentage_left+"%"
             indicator.set_label(label,"Battery status and level")
-            f.close()
+            capacity_file.close()
             status_file.close()
 
-class SteamWatcher():
+class SteamWatcher:
     def __init__(self):
         self.commamd_runner = CommandsRunner()
         self.last_time_window = None
@@ -268,49 +268,161 @@ class SteamWatcher():
 
 #Reconnecting gamepad process in Ubuntu has some problems, so we need to reconnect it periodically
 class GamepadWatcher():
-    def __init__(self):
+    def __init__(self, adapter_index):
+        self.adapter_index = adapter_index
         self.dbus = SystemBus()
         self.manager = self.dbus.get('org.bluez', '/')
         # self.adapter = bus.get('org.bluez','/org/bluez/hci0')
-        self.devices = self.manager.GetManagedObjects()
+        self.devices = self.manager.GetManagedObjects()  
+        self.gamepads = self.filter_devices(self.dbus,self.devices,self.adapter_index)
         
-        self.gamepad_watcher = Thread(target=self.scan_devices)
-        self.gamepad_watcher.daemon=True
-        self.gamepad_watcher.start()
+        self.subscribe_to_all_device_state_changed()
+        self.subscribe_to_devices_added()
+        
+        for path in self.gamepads:
+            self.gamepads[path].infinite_connection_attempts()
 
-    def reconnect_gamepad(self,adapter_index):
-        second_adapter_devices = [self.devices[device_path] for device_path in self.devices if f"hci{adapter_index}" in device_path]
+    def subscribe_to_devices_added(self):
+        def command(device_path,device):
+            device_properties = self.get_gamepad_properties(device,device_path)
+            if device_properties != None:
+                self.gamepads[device_path] = device_properties
+                print(f"Gamepad added {device_path} {device_properties}")
+                device_properties.infinite_connection_attempts()
+                device_properties.subscribe_to_properties_changed()
 
-        for device in second_adapter_devices:
-            if 'org.bluez.Device1' in device: 
-                device_props = device['org.bluez.Device1']
-                device_name = device_props['Name']
-                if default_gamepad_name in device_name:
-                    device_adapter = device_props['Adapter']
-                    device_address = device_props['Address']
-                    device_paired = device_props['Paired']
-                    device_connected = device_props['Connected']
-                    if device_connected == False:
-                        try:
-                            print(f"Try to connect device {device_name}")
-                            device_path = f"{device_adapter}/dev_{device_address.replace(':', '_')}"
-                            device = self.dbus.get('org.bluez',device_path)
-                            device.Connect()
-                            print(f"Device {device_name} connected")
-                            print(f"Device name {device_name} adapter {device_adapter} address {device_address} paired {device_paired} connected {device_connected}")
-                        except Exception as e:
-                            print(f"Connection error: {str(e)}")
-                    
-    def scan_devices(self):
-        while True:
-            self.reconnect_gamepad(0)
-            self.reconnect_gamepad(1)
-            time.sleep(gamepad_rescan_sec)
+        self.manager.InterfacesAdded.connect(command)
+        
+    def subscribe_to_all_device_state_changed(self):
+            paths_to_delete = []
+            for path in self.gamepads:    
+                try:
+                    self.gamepads[path].subscribe_to_properties_changed()
+                except Exception as e:
+                    print(f"Subscription to gamepad error it will be removed {str(e)}")
+                    paths_to_delete.append(path)
+            
+            for path in paths_to_delete:
+                del self.gamepads[path]
+
+    def filter_devices(self,dbus,devices,adapter_index):
+        gamepads = {}
+        for device_path in devices:
+            if f"hci{adapter_index}" in device_path:
+                device_properties = self.get_gamepad_properties(devices[device_path],device_path) 
+                if  device_properties != None:
+                    gamepads[device_path] = device_properties
+        return gamepads
+
+    def get_gamepad_properties(self,device_info,device_path):
+        if 'org.bluez.Device1' in device_info: 
+                device_props = device_info['org.bluez.Device1']
+                if  'Name' in device_props:
+                    device_name = device_props['Name']
+                    if default_gamepad_name in device_name:
+                        return  DeviceProperties(self.dbus,device_path)
+        return None
+    
+    def scan_devices():
+        pass
+
+class DeviceProperties:
+    def __init__(self,dbus,path):
+        self.dbus = dbus
+        self.path = path
+        self.proxy = self.dbus.get('org.bluez',path)
+        self.adapter = self.proxy.Adapter
+        self.address = self.proxy.Address
+        self.name = self.proxy.Name
+        
+        self.subscribed = False
+        self.connection_attempts_started = False
+
+    def is_connected(self):
+        try:
+            if self.proxy != None:
+                return self.proxy.Connected
+            else: 
+                return False
+        except:
+            return False
+
+    def is_paired(self):
+        try:
+            if self.proxy != None:
+                return self.proxy.Paired
+            else:
+                return False
+        except:
+            return False
+        
+    def infinite_connection_attempts(self):
+        def infinite_connections():
+            if not self.connection_attempts_started and self.proxy != None:
+                self.connection_attempts_started = True
+                while True:
+                    try:
+                        if(self.is_paired() and self.is_connected()):
+                            self.connection_attempts_started = False
+                            break
+                        else:
+                            if not self.is_connected() and self.proxy != None:
+                                print(f"Try to connect device {self.name}")
+                                self.proxy.Connect()
+                                print(f"Device connectd {self}")
+                            if not self.is_paired() and self.proxy != None:
+                                print(f"Try to pair device {self.name}")
+                                self.proxy.Pair()
+                                print(f"Device paired {self}")    
+                            self.connection_attempts_started = False
+                            break
+                    except Exception as e:
+                        print(f"Connection error: {str(e)} to {self.name}")
+                        self.refresh_proxy()
+                        time.sleep(gamepad_rescan_sec)
+
+
+        connections = Thread(target=infinite_connections)
+        connections.daemon=True
+        connections.start()
+
+    def refresh_proxy(self):
+        try:
+            self.proxy = self.dbus.get('org.bluez',self.path)
+        except:
+            self.proxy = None
+
+    def command(self,properties,array):
+        if  (('Connected' in properties and properties['Connected'] == False) or 
+            ('Paired' in properties and properties['Paired'] == False)):
+            print(f"Connection status changed {self.name}")
+            self.infinite_connection_attempts()
+        elif 'ServicesResolved' in properties and properties['ServicesResolved'] == False:
+            print(f"Device {self.name} removed")
+            self.proxy = None
+        elif 'ServicesResolved' in properties and properties['ServicesResolved'] == True:
+            print(f"Device {self.name} reverted")
+            self.refresh_proxy()
+            self.infinite_connection_attempts()
+
+    def subscribe_to_properties_changed(self):
+        if self.subscribed == False:
+            def command(external_self,properties,array):
+                self.command(properties,array)
+            print(f"Try to subscribe to device {self.name} state changing")
+            self.proxy.PropertiesChanged.connect(command)
+            self.subscribed = True
+
+    def __str__(self):
+        is_paired = self.is_paired()
+        is_connected = self.is_connected()
+        return f"Name {self.name} adapter {self.adapter} address {self.address} paired {is_paired} connected {is_connected} subscribed {self.subscribed}"
 
 def main():
     Indicator()
     SteamWatcher()
-    GamepadWatcher()
+    GamepadWatcher(0)
+    GamepadWatcher(1)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     gtk.main()
 
