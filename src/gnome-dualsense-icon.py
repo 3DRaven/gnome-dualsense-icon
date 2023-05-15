@@ -245,12 +245,12 @@ class SteamWatcher:
                 if self.is_steam_main_window(instance_class_name) and self.last_time_window != instance_class_name and self.commamd_runner.is_active_display(default_main_screen):
                     print("Opened main steam window on main display")
                     opened_window.activate(True)
-                    opened_window.maximize ()
+                    # opened_window.maximize ()
                 if self.is_steam_big_picture_window(instance_class_name) and self.last_time_window != instance_class_name:
                     print("Opened Big Picture steam window")
                     opened_window.activate(True)
-                    opened_window.make_above()
-                    opened_window.set_fullscreen(True)
+                    # opened_window.make_above()
+                    # opened_window.set_fullscreen(True)
                 self.last_time_window = instance_class_name
         
         def do_window_closed(this_screen: Wnck.Screen, closed_window: Wnck.Window):
