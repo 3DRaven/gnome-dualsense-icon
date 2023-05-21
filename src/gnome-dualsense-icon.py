@@ -24,6 +24,7 @@ waiting_second_display_sec=10 #waiting to turning on second display time
 gamepad_rescan_sec=3 #reconnection to gamepad time and key pressed scanner restart time
 default_label="--%"
 default_desc="Battery status and level"
+default_icon="input-gaming"
 
 default_gamepad_name = 'Wireless Controller' #gamepad name for connected bluetooth gamepad
 default_sink_for_games = "alsa_output.pci-0000_01_00.1.hdmi-stereo" #sound ouput device for second display
@@ -120,15 +121,23 @@ class Indicator:
         self.last_battery_percentage = '--'
         self.last_battery_state = '?'
         self.subscribe_to_battery()
+        self.gamepad = None
         
     def subscribe_to_battery(self):
-        def pcmd(a,b,c):
-            print(f"Event on manager {a} {b} {c}")
+        def device_added_command(*event):
+            print(f"Recieved device added event {event}")
+            self.subscribe_to_devices()
+        def device_removed_command(*event):
+            print(f"Recieved device removed event {event}")
+            self.indicator.set_label("--%","Battery status and level")
+            self.indicator.set_icon_full(default_icon,"Battery icon")
+
+        self.device_info_manager.DeviceAdded.connect(device_added_command)
+        self.device_info_manager.DeviceRemoved.connect(device_removed_command)
         
-        self.device_info_manager.DeviceAdded.connect(pcmd)
-        self.device_info_manager.DeviceRemoved.connect(pcmd)
-        self.device_info_manager.PropertiesChanged.connect(pcmd)
-        
+        self.subscribe_to_devices()
+
+    def subscribe_to_devices(self):
         for device_path in self.device_info_manager.EnumerateDevices():
             device = self.dbus.get('org.freedesktop.UPower', device_path)
             if default_gamepad_name in device.Model:
@@ -142,10 +151,12 @@ class Indicator:
     def update_status(self,properties,array):
         print(f"Recieved properties changed event: {properties} last state: {self.last_battery_icon_name} {self.last_battery_percentage} {self.last_battery_state}")
         if 'State' in properties and properties['State'] == 1:
-            self.last_battery_state = "C" #Charging
+            self.last_battery_state = "S" #Charger is not connected
         if 'State' in properties and properties['State'] == 2:
-            self.last_battery_state = ""#Not connected to charger
+            self.last_battery_state = "C" #Charging
         if 'State' in properties and properties['State'] == 3:
+            self.last_battery_state = "U" #Unknown
+        if 'State' in properties and properties['State'] == 4:
             self.last_battery_state = "F" #Full
         if 'Percentage' in properties:
             self.last_battery_percentage = properties['Percentage']
