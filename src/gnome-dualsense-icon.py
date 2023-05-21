@@ -17,7 +17,7 @@ from gi.repository import Wnck
 import time
 from threading import Thread
 import re
-from pydbus import SystemBus #apt-get install python3-pydbus 
+import pydbus #apt-get install python3-pydbus 
 
 battery_refresh_time_sec=10 #rescan battery of gamepad time
 waiting_second_display_sec=10 #waiting to turning on second display time
@@ -110,27 +110,49 @@ class CommandsRunner:
 
 class Indicator:
     def __init__(self):
-        self.indicator = appindicator.Indicator.new("Dualsense battery", 'input-gaming', appindicator.IndicatorCategory.APPLICATION_STATUS)
+        self.last_battery_icon_name = 'input-gaming'
+        self.indicator = appindicator.Indicator.new("Dualsense battery", self.last_battery_icon_name, appindicator.IndicatorCategory.APPLICATION_STATUS)
         self.indicator.set_status(appindicator.IndicatorStatus.ACTIVE)
         self.indicator.set_label(default_label, default_desc)
         self.indicator.set_menu(self.create_menu())
+        self.dbus = pydbus.SystemBus()
+        self.device_info_manager = self.dbus.get('org.freedesktop.UPower', '/org/freedesktop/UPower')
+        self.last_battery_percentage = '--'
+        self.last_battery_state = '?'
+        self.subscribe_to_battery()
+        
+    def subscribe_to_battery(self):
+        def pcmd(a,b,c):
+            print(f"Event on manager {a} {b} {c}")
+        
+        self.device_info_manager.DeviceAdded.connect(pcmd)
+        self.device_info_manager.DeviceRemoved.connect(pcmd)
+        self.device_info_manager.PropertiesChanged.connect(pcmd)
+        
+        for device_path in self.device_info_manager.EnumerateDevices():
+            device = self.dbus.get('org.freedesktop.UPower', device_path)
+            if default_gamepad_name in device.Model:
+                def command(external_self,properties,array):
+                    self.update_status(properties,array)
+                print(f"Try to subscribe to dbus device {device.Model} state changing")
+                device.PropertiesChanged.connect(command)
+                self.update_status({'IconName': device.IconName, 'State': device.State, 'Percentage': device.Percentage},[])
 
-        self.update = Thread(target=self.get_time)
-        self.update.daemon=True
-        self.update.start()
-
-    def refresh_baterry_path(self):
-        try:
-            self.battery_path
-        except AttributeError:
-            #example: /sys/devices/pci0000:00/0000:00:08.1/0000:05:00.3/usb1/1-2/1-2.2/1-2.2:1.3/0003:054C:0CE6.0005/power_supply/ps-controller-battery-7c:66:ef:4f:79:
-            self.battery_path = subprocess.check_output(["find", "/sys/devices/","-name","ps-controller-battery*"]).decode("utf-8").strip()
-
-    def get_time(self):
-      loop = 0
-      while True:
-          GLib.idle_add( self.update_capacity, self.indicator , priority=GLib.PRIORITY_DEFAULT)
-          time.sleep(battery_refresh_time_sec)
+    # Indicator cahnged {'UpdateTime': 1684691028, 'IconName': 'battery-good-charging-symbolic', 'State': 1, 'Percentage': 35.0} []    
+    def update_status(self,properties,array):
+        print(f"Recieved properties changed event: {properties} last state: {self.last_battery_icon_name} {self.last_battery_percentage} {self.last_battery_state}")
+        if 'State' in properties and properties['State'] == 1:
+            self.last_battery_state = "C" #Charging
+        if 'State' in properties and properties['State'] == 2:
+            self.last_battery_state = ""#Not connected to charger
+        if 'State' in properties and properties['State'] == 3:
+            self.last_battery_state = "F" #Full
+        if 'Percentage' in properties:
+            self.last_battery_percentage = properties['Percentage']
+        # if 'IconName' in properties:
+        #     self.last_battery_icon_name = properties['IconName']
+        self.indicator.set_label(self.last_battery_state+str(self.last_battery_percentage)+"%","Battery status and level")
+        # self.indicator.set_icon_full(self.last_battery_icon_name,"Battery icon")
 
     def create_menu(self):
         menu = gtk.Menu()
@@ -158,30 +180,6 @@ class Indicator:
         
     def quit(self, source):
         gtk.main_quit()
-
-    def update_capacity(self, indicator):
-        try:
-            self.refresh_baterry_path()
-            capacity_file = open(f"{self.battery_path}/capacity")
-            status_file = open(f"{self.battery_path}/status")
-            #print("Battery info location: " + self.battery_path)
-        except FileNotFoundError:
-            #print("ERROR: Your controller can't be detected, refresh planned.")
-            del self.battery_path
-            indicator.set_label(default_label,default_desc)
-        else:
-            battery_percentage_left = capacity_file.readline().strip()
-            status = status_file.readline().strip()
-            
-            if status == "Charging":
-                label = "C"+battery_percentage_left+"%"
-            elif status == "Full":
-                label = "F"+battery_percentage_left+"%"
-            else:
-                label = battery_percentage_left+"%"
-            indicator.set_label(label,"Battery status and level")
-            capacity_file.close()
-            status_file.close()
 
 class SteamWatcher:
     def __init__(self):
@@ -277,7 +275,7 @@ class SteamWatcher:
 class GamepadWatcher():
     def __init__(self, adapter_index):
         self.adapter_index = adapter_index
-        self.dbus = SystemBus()
+        self.dbus = pydbus.SystemBus()
         self.manager = self.dbus.get('org.bluez', '/')
         # self.adapter = bus.get('org.bluez','/org/bluez/hci0')
         self.devices = self.manager.GetManagedObjects()  
@@ -424,9 +422,9 @@ class DeviceProperties:
         is_paired = self.is_paired()
         is_connected = self.is_connected()
         return f"Name {self.name} adapter {self.adapter} address {self.address} paired {is_paired} connected {is_connected} subscribed {self.subscribed}"
-
+        
 def main():
-    Indicator()
+    indicator = Indicator()
     SteamWatcher()
     GamepadWatcher(0)
     GamepadWatcher(1)
