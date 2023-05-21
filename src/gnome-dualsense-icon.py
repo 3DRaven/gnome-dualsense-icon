@@ -206,7 +206,7 @@ class SteamWatcher:
         for device in devices:
             print(f"Found device '{device.name}'")
             if default_gamepad_name in device.name:
-                return device.path
+                return device
         return None
     
     def watch_keys(self):
@@ -216,15 +216,22 @@ class SteamWatcher:
                 if not gamepad_device:
                         raise Exception(f"Gamepad device {default_gamepad_name} not found")  
                 print(f"Found gamepad device path '{gamepad_device}'")
-                gamepad = evdev.InputDevice(gamepad_device)
-                for event in gamepad.read_loop():
-                    if event.type == evdev.ecodes.KEY_ESC and event.value == 1 and self.commamd_runner.is_active_display(default_main_screen):
+                for event in gamepad_device.read_loop():
+                    if event.value == 1:
+                        print(f"Gamepad key pressed {evdev.categorize(event)}")
+                        print(gamepad_device.active_keys())
+                    if event.code == evdev.ecodes.BTN_MODE and event.value == 1 and self.commamd_runner.is_active_display(default_main_screen):
                         self.commamd_runner.switch_to_second_display()
-                        
                         if not self.is_steam_running():
                             self.commamd_runner.start_steam()
                         else:
                             print("Steam already started")
+                    if event.code == evdev.ecodes.BTN_A and event.value == 1:
+                        if evdev.ecodes.BTN_SELECT in gamepad_device.active_keys():
+                            if  self.commamd_runner.is_active_display(default_main_screen):
+                                self.commamd_runner.switch_to_second_display()
+                            else:
+                                self.commamd_runner.switch_to_first_display()
             except Exception as e:
                 print(f"Keys scan error {str(e)}")
                 time.sleep(gamepad_rescan_sec)
