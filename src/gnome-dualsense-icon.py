@@ -19,7 +19,7 @@ from threading import Thread
 import re
 import pydbus #apt-get install python3-pydbus 
 
-waiting_second_display_sec=10 #waiting to turning on second display time
+waiting_display_on_sec=10 #waiting to turning on second display time
 gamepad_rescan_sec=3 #reconnection to gamepad time and key pressed scanner restart time
 
 default_gamepad_name = 'Wireless Controller' #gamepad name for connected bluetooth gamepad
@@ -63,22 +63,16 @@ class CommandsRunner:
         print(f"Run command {command}")
         return subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def switch_to_first_display(self):
-        print("Switch to first display")
-        self.run_and_wait(command_display_first_on)
-        self.run_and_wait(command_display_second_off)
-        print("Moving sound to first output device")
-        self.run_and_wait(command_sound_to_first)
-
-    def wait_second_display_sec(self,sec):
-            print("Waiting for turning second display on")
+    def wait_display_on(self,max_wait_sec,display_name):
+            print(f"Waiting for turning {display_name} display on")
             loop = 0
             while True:
-                if self.is_active_display(default_tv_screen) or loop > sec:
+                if self.is_active_display(display_name) or loop > max_wait_sec:
+                    print(f"Display {display_name} on")
                     break
                 time.sleep(1)
                 loop = loop + 1
-
+    
     def list_audio_sinks(self):
             print("Listing output sound devices")
             output = subprocess.check_output(['pactl', 'list', 'sinks']).decode()
@@ -96,11 +90,22 @@ class CommandsRunner:
             self.run_and_wait(f"xdotool mousemove {screen.get_width()//2} {screen.get_height()//2}")
         GLib.idle_add( command , priority=GLib.PRIORITY_DEFAULT)    
 
+    def switch_to_first_display(self):
+        print("Switch to first display")
+        # off first because some windows size will be resized for new one display automatically
+        self.run_and_wait(command_display_second_off)
+        self.run_and_wait(command_display_first_on)
+        self.wait_display_on(waiting_display_on_sec,default_main_screen)
+        print("Moving sound to first output device")
+        self.run_and_wait(command_sound_to_first)
+
+
     def switch_to_second_display(self):
         print("Switch to second display")
+        # off first because some windows size will be resized for new one display automatically
         self.run_and_wait(command_display_first_off)
         self.run_and_wait(command_display_second_on)
-        self.wait_second_display_sec(waiting_second_display_sec)
+        self.wait_display_on(waiting_display_on_sec,default_tv_screen)
         self.list_audio_sinks()
         print("Switching sound to second device")
         self.run_and_wait(command_sound_to_second)
