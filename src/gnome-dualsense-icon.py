@@ -19,12 +19,8 @@ from threading import Thread
 import re
 import pydbus #apt-get install python3-pydbus 
 
-battery_refresh_time_sec=10 #rescan battery of gamepad time
 waiting_second_display_sec=10 #waiting to turning on second display time
 gamepad_rescan_sec=3 #reconnection to gamepad time and key pressed scanner restart time
-default_label="--%"
-default_desc="Battery status and level"
-default_icon="input-gaming"
 
 default_gamepad_name = 'Wireless Controller' #gamepad name for connected bluetooth gamepad
 default_sink_for_games = "alsa_output.pci-0000_01_00.1.hdmi-stereo" #sound ouput device for second display
@@ -47,6 +43,14 @@ command_display_first_off = f"xrandr --output {default_main_screen} --off"
 #start steam in old big picture mode, because new big picture has some glitches
 command_steam_start = "env GDK_SCALE=2 /usr/bin/steam -silent -oldbigpicture"
 
+class Printer:
+    def __init__(self) -> None:
+        self.counter = 0
+    def print_every(self, string: str, every: int = 30):
+        if self.counter == every or self.counter == 0:
+            print(string)
+            self.counter = 0
+        self.counter += 1
 class CommandsRunner:
     def __init__(self):
         self.steam_process = None
@@ -85,10 +89,12 @@ class CommandsRunner:
                     print(f"Found sound output device: [{match.group(groupNum)}]")
 
     def center_mouse_cursor(self):
+        def command():
             print("Centering mouse cursor")
             screen = Wnck.Screen.get_default()
             #for preventing some glitches with side pannels and mouse in new screen and resolution
             self.run_and_wait(f"xdotool mousemove {screen.get_width()//2} {screen.get_height()//2}")
+        GLib.idle_add( command , priority=GLib.PRIORITY_DEFAULT)    
 
     def switch_to_second_display(self):
         print("Switch to second display")
@@ -110,18 +116,23 @@ class CommandsRunner:
         return active_monitor_model == display_name
 
 class Indicator:
-    def __init__(self):
-        self.last_battery_icon_name = 'input-gaming'
-        self.indicator = appindicator.Indicator.new("Dualsense battery", self.last_battery_icon_name, appindicator.IndicatorCategory.APPLICATION_STATUS)
+    def __init__(self, dbus: pydbus.SystemBus, device_info_manager, default_icon_name: str = 'input-gaming', default_battery_percentage:str = '--', default_battery_state: str = '?', default_gamepad_name: str = 'Wireless Controller'):
+        self.dbus: pydbus.SystemBus = dbus
+        self.default_gamepad_name: str = default_gamepad_name
+        self.default_icon_name: str = default_icon_name
+        self.last_battery_icon_name: str = default_icon_name
+        self.default_battery_percentage: str = default_battery_percentage
+        self.last_battery_percentage: str = default_battery_percentage
+        self.default_battery_state: str = default_battery_state
+        self.last_battery_state: str = default_battery_state
+        self.indicator:appindicator.Indicator = appindicator.Indicator.new("Dualsense battery", self.last_battery_icon_name, appindicator.IndicatorCategory.APPLICATION_STATUS)
         self.indicator.set_status(appindicator.IndicatorStatus.ACTIVE)
-        self.indicator.set_label(default_label, default_desc)
+        self.indicator.set_label(default_battery_percentage+'%', "Battery status and level")
         self.indicator.set_menu(self.create_menu())
-        self.dbus = pydbus.SystemBus()
-        self.device_info_manager = self.dbus.get('org.freedesktop.UPower', '/org/freedesktop/UPower')
-        self.last_battery_percentage = '--'
-        self.last_battery_state = '?'
-        self.subscribe_to_battery()
+        self.device_info_manager = device_info_manager
         self.gamepad = None
+        self.subscribe_to_battery()
+        
         
     def subscribe_to_battery(self):
         def device_added_command(*event):
@@ -129,8 +140,8 @@ class Indicator:
             self.subscribe_to_devices()
         def device_removed_command(*event):
             print(f"Recieved device removed event {event}")
-            self.indicator.set_label("--%","Battery status and level")
-            self.indicator.set_icon_full(default_icon,"Battery icon")
+            self.indicator.set_label(self.default_battery_percentage+'%',"Battery status and level")
+            self.indicator.set_icon_full(self.default_icon_name,"Battery icon")
 
         self.device_info_manager.DeviceAdded.connect(device_added_command)
         self.device_info_manager.DeviceRemoved.connect(device_removed_command)
@@ -140,10 +151,10 @@ class Indicator:
     def subscribe_to_devices(self):
         for device_path in self.device_info_manager.EnumerateDevices():
             device = self.dbus.get('org.freedesktop.UPower', device_path)
-            if default_gamepad_name in device.Model:
+            if self.default_gamepad_name in device.Model:
                 def command(external_self,properties,array):
                     self.update_status(properties,array)
-                print(f"Try to subscribe to dbus device {device.Model} state changing")
+                print(f"Subscribe to dbus device {device.Model} state changing")
                 device.PropertiesChanged.connect(command)
                 self.update_status({'IconName': device.IconName, 'State': device.State, 'Percentage': device.Percentage},[])
 
@@ -201,7 +212,7 @@ class SteamWatcher:
         self.gamepad_events_watcher.daemon=True
         self.gamepad_events_watcher.start()
 
-        self.watch_steam()
+        # self.watch_steam()
 
     def is_steam_running(self):
         for proc in psutil.process_iter(['name']):
@@ -209,8 +220,8 @@ class SteamWatcher:
                 return True
         return False
     
-    def find_gamepad_by_name(self):
-        print("Finding gamepad by name")
+    def find_gamepad_by_name(self, printer: Printer):
+        printer.print_every("Finding gamepad by name")
         devices = [evdev.InputDevice(device) for device in evdev.list_devices()]
         for device in devices:
             print(f"Found device '{device.name}'")
@@ -219,30 +230,30 @@ class SteamWatcher:
         return None
     
     def watch_keys(self):
+        printer = Printer()
         while True:
             try:
-                gamepad_device = self.find_gamepad_by_name()
+                gamepad_device = self.find_gamepad_by_name(printer)
                 if not gamepad_device:
                         raise Exception(f"Gamepad device {default_gamepad_name} not found")  
                 print(f"Found gamepad device path '{gamepad_device}'")
                 for event in gamepad_device.read_loop():
                     if event.value == 1:
                         print(f"Gamepad key pressed {evdev.categorize(event)}")
-                        print(gamepad_device.active_keys())
                     if event.code == evdev.ecodes.BTN_MODE and event.value == 1 and self.commamd_runner.is_active_display(default_main_screen):
-                        self.commamd_runner.switch_to_second_display()
+                        # self.commamd_runner.switch_to_second_display()
                         if not self.is_steam_running():
                             self.commamd_runner.start_steam()
                         else:
                             print("Steam already started")
-                    if event.code == evdev.ecodes.BTN_A and event.value == 1:
+                    if event.code == evdev.ecodes.BTN_NORTH and event.value == 1:
                         if evdev.ecodes.BTN_SELECT in gamepad_device.active_keys():
                             if  self.commamd_runner.is_active_display(default_main_screen):
                                 self.commamd_runner.switch_to_second_display()
                             else:
                                 self.commamd_runner.switch_to_first_display()
             except Exception as e:
-                print(f"Keys scan error {str(e)}")
+                printer.print_every(f"Keys scan error {str(e)}")
                 time.sleep(gamepad_rescan_sec)
                 
     def is_steam_main_window(self,class_name):
@@ -284,17 +295,17 @@ class SteamWatcher:
 
 #Reconnecting gamepad process in Ubuntu has some problems, so we need to reconnect it periodically
 class GamepadWatcher():
-    def __init__(self, adapter_index):
-        self.adapter_index = adapter_index
-        self.dbus = pydbus.SystemBus()
-        self.manager = self.dbus.get('org.bluez', '/')
-        # self.adapter = bus.get('org.bluez','/org/bluez/hci0')
-        self.devices = self.manager.GetManagedObjects()  
+    def __init__(self, adapter_index: int, dbus: pydbus.SystemBus):
+        self.adapter_index: int = adapter_index
+        self.dbus: pydbus.SystemBus = dbus
+        self.device_manager = self.dbus.get('org.bluez', '/')
+        self.devices = self.device_manager.GetManagedObjects()  
         self.gamepads = self.filter_devices(self.dbus,self.devices,self.adapter_index)
         
         self.subscribe_to_all_device_state_changed()
         self.subscribe_to_devices_added()
-        
+        self.subscribe_to_devices_removed()
+
         for path in self.gamepads:
             self.gamepads[path].infinite_connection_attempts()
 
@@ -302,12 +313,18 @@ class GamepadWatcher():
         def command(device_path,device):
             device_properties = self.get_gamepad_properties(device,device_path)
             if device_properties != None:
+                print(f"Gamepad added {device_path}")
                 self.gamepads[device_path] = device_properties
-                print(f"Gamepad added {device_path} {device_properties}")
                 device_properties.infinite_connection_attempts()
                 device_properties.subscribe_to_properties_changed()
+        self.device_manager.InterfacesAdded.connect(command)
 
-        self.manager.InterfacesAdded.connect(command)
+    def subscribe_to_devices_removed(self):
+        def command(device_path,device_info):
+            if device_path in self.gamepads:
+                print(f"Gamepad removed {device_path}")
+                del self.gamepads[device_path]
+        self.device_manager.InterfacesRemoved.connect(command)
         
     def subscribe_to_all_device_state_changed(self):
             paths_to_delete = []
@@ -376,6 +393,7 @@ class DeviceProperties:
         def infinite_connections():
             if not self.connection_attempts_started and self.proxy != None:
                 self.connection_attempts_started = True
+                printer = Printer()
                 while True:
                     try:
                         if(self.is_paired() and self.is_connected()):
@@ -383,17 +401,17 @@ class DeviceProperties:
                             break
                         else:
                             if not self.is_connected() and self.proxy != None:
-                                print(f"Try to connect device {self.name}")
+                                printer.print_every(f"Try to connect device {self.name}")
                                 self.proxy.Connect()
-                                print(f"Device connectd {self}")
+                                printer.print_every(f"Device connectd {self}")
                             if not self.is_paired() and self.proxy != None:
-                                print(f"Try to pair device {self.name}")
+                                printer.print_every(f"Try to pair device {self.name}")
                                 self.proxy.Pair()
-                                print(f"Device paired {self}")    
+                                printer.print_every(f"Device paired {self}")    
                             self.connection_attempts_started = False
                             break
                     except Exception as e:
-                        print(f"Connection error: {str(e)} to {self.name}")
+                        printer.print_every(f"Error in connection to device process {str(e)}")
                         self.refresh_proxy()
                         time.sleep(gamepad_rescan_sec)
 
@@ -425,7 +443,7 @@ class DeviceProperties:
         if self.subscribed == False:
             def command(external_self,properties,array):
                 self.command(properties,array)
-            print(f"Try to subscribe to device {self.name} state changing")
+            print(f"Subscribe to device {self.name} state changing")
             self.proxy.PropertiesChanged.connect(command)
             self.subscribed = True
 
@@ -433,12 +451,19 @@ class DeviceProperties:
         is_paired = self.is_paired()
         is_connected = self.is_connected()
         return f"Name {self.name} adapter {self.adapter} address {self.address} paired {is_paired} connected {is_connected} subscribed {self.subscribed}"
-        
+
 def main():
-    indicator = Indicator()
+    #commands for introspect bluetooth dbus from command line
+    # gdbus introspect --system --dest org.bluez --object-path /org/bluez
+    # gdbus introspect --system --dest org.bluez --object-path /
+    # gdbus introspect --system --dest org.bluez --object-path /org/bluez/hci0
+
+    dbus = pydbus.SystemBus()
+    upower_manager = dbus.get('org.freedesktop.UPower', '/org/freedesktop/UPower')
+    Indicator(dbus,upower_manager)
     SteamWatcher()
-    GamepadWatcher(0)
-    GamepadWatcher(1)
+    GamepadWatcher(0,dbus)
+    GamepadWatcher(1,dbus)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     gtk.main()
 
