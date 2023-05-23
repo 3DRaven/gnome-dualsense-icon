@@ -165,14 +165,14 @@ class Indicator:
     # Indicator cahnged {'UpdateTime': 1684691028, 'IconName': 'battery-good-charging-symbolic', 'State': 1, 'Percentage': 35.0} []    
     def update_status(self,properties,array):
         print(f"Recieved properties changed event: {properties} last state: {self.last_battery_icon_name} {self.last_battery_percentage} {self.last_battery_state}")
-        if 'State' in properties and properties['State'] == 1:
-            self.last_battery_state = "S" #Charger is not connected
-        if 'State' in properties and properties['State'] == 2:
+        if 'IconName' in properties and 'charging' in properties['IconName']:
             self.last_battery_state = "C" #Charging
-        if 'State' in properties and properties['State'] == 3:
-            self.last_battery_state = "U" #Unknown
-        if 'State' in properties and properties['State'] == 4:
-            self.last_battery_state = "F" #Full
+        elif 'IconName' in properties and 'low' in properties['IconName']:
+            self.last_battery_state = "" #Low battery
+        elif 'IconName' in properties and 'caution' in properties['IconName']:
+            self.last_battery_state = "" #Very low battery
+        elif 'IconName' in properties and 'full' in properties['IconName']:
+            self.last_battery_state = "" #Full battery        
         if 'Percentage' in properties:
             self.last_battery_percentage = properties['Percentage']
         # if 'IconName' in properties:
