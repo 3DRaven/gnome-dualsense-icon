@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-
 print(f"Please check that this packages installed in your systyem [python3-pydbus,python3-evdev,xdotool]")
 
 import signal
@@ -243,9 +242,10 @@ class SteamWatcher:
                         raise Exception(f"Gamepad device {default_gamepad_name} not found")  
                 print(f"Found gamepad device path '{gamepad_device}'")
                 for event in gamepad_device.read_loop():
-                    if event.value == 1:
-                        print(f"Gamepad key pressed {evdev.categorize(event)}")
+                    # if event.value == 1:
+                    #     print(f"Gamepad key pressed {evdev.categorize(event)}")
                     if event.code == evdev.ecodes.BTN_MODE and event.value == 1 and self.commamd_runner.is_active_display(default_main_screen):
+                        print(f"Gamepad key pressed {evdev.categorize(event)}")
                         # self.commamd_runner.switch_to_second_display()
                         if not self.is_steam_running():
                             self.commamd_runner.start_steam()
@@ -253,6 +253,7 @@ class SteamWatcher:
                             print("Steam already started")
                     if event.code == evdev.ecodes.BTN_NORTH and event.value == 1:
                         if evdev.ecodes.BTN_SELECT in gamepad_device.active_keys():
+                            print(f"Gamepad key pressed {evdev.categorize(event)} with active BTN_SELECT")
                             if  self.commamd_runner.is_active_display(default_main_screen):
                                 self.commamd_runner.switch_to_second_display()
                             else:
@@ -458,6 +459,10 @@ class DeviceProperties:
         return f"Name {self.name} adapter {self.adapter} address {self.address} paired {is_paired} connected {is_connected} subscribed {self.subscribed}"
 
 def main():
+    print("Press gamepad button X (north) to switch between displays and sound sources")
+    print("Press gamepad button PS (mode) to start steam if it is not started")
+    print()
+    print()
     #commands for introspect bluetooth dbus from command line
     # gdbus introspect --system --dest org.bluez --object-path /org/bluez
     # gdbus introspect --system --dest org.bluez --object-path /
