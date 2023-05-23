@@ -165,6 +165,9 @@ class Indicator:
     # Indicator cahnged {'UpdateTime': 1684691028, 'IconName': 'battery-good-charging-symbolic', 'State': 1, 'Percentage': 35.0} []    
     def update_status(self,properties,array):
         print(f"Recieved properties changed event: {properties} last state: {self.last_battery_icon_name} {self.last_battery_percentage} {self.last_battery_state}")
+        #low-charging
+        #caution-charging
+        #full
         if 'IconName' in properties and 'charging' in properties['IconName']:
             self.last_battery_state = "C" #Charging
         elif 'IconName' in properties and 'low' in properties['IconName']:
@@ -242,11 +245,8 @@ class SteamWatcher:
                         raise Exception(f"Gamepad device {default_gamepad_name} not found")  
                 print(f"Found gamepad device path '{gamepad_device}'")
                 for event in gamepad_device.read_loop():
-                    # if event.value == 1:
-                    #     print(f"Gamepad key pressed {evdev.categorize(event)}")
-                    if event.code == evdev.ecodes.BTN_MODE and event.value == 1 and self.commamd_runner.is_active_display(default_main_screen):
+                    if event.code == evdev.ecodes.BTN_MODE and event.value == 1:
                         print(f"Gamepad key pressed {evdev.categorize(event)}")
-                        # self.commamd_runner.switch_to_second_display()
                         if not self.is_steam_running():
                             self.commamd_runner.start_steam()
                         else:
