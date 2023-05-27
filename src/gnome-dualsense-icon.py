@@ -175,7 +175,10 @@ class Indicator:
         elif 'IconName' in properties and 'caution' in properties['IconName']:
             self.last_battery_state = "" #Very low battery
         elif 'IconName' in properties and 'full' in properties['IconName']:
-            self.last_battery_state = "" #Full battery        
+            self.last_battery_state = "" #Full battery
+        elif 'IconName' in properties and 'battery-good' in properties['IconName']:
+            self.last_battery_state = "" #middle battery cherge        
+        
         if 'Percentage' in properties:
             self.last_battery_percentage = properties['Percentage']
         # if 'IconName' in properties:
@@ -211,15 +214,35 @@ class Indicator:
         gtk.main_quit()
 
 class SteamWatcher:
-    def __init__(self):
+    def __init__(self,dbus,device_info_manager,default_gamepad_name: str = 'Wireless Controller'):
         self.commamd_runner = CommandsRunner()
         self.last_time_window = None
+        self.device_info_manager = device_info_manager
+        self.dbus = dbus
+        self.default_gamepad_name = default_gamepad_name
+        self.printer = Printer()
+        self.subscribe_to_battery()
+        self.watch_steam()
 
-        self.gamepad_events_watcher = Thread(target=self.watch_keys)
-        self.gamepad_events_watcher.daemon=True
-        self.gamepad_events_watcher.start()
+    def subscribe_to_battery(self):
+        def device_added_command(*event):
+            print(f"Recieved device added event {event}")
+            for device_path in self.device_info_manager.EnumerateDevices():
+                device = self.dbus.get('org.freedesktop.UPower', device_path)
+                if self.default_gamepad_name in device.Model:
+                    self.gamepad_events_watcher = Thread(target=self.watch_keys)
+                    self.gamepad_events_watcher.daemon=True
+                    self.gamepad_events_watcher.start()
+        def device_removed_command(*event):
+            print(f"Recieved device removed event {event}")
+            self.gamepad_device = None
 
-        # self.watch_steam()
+        self.device_info_manager.DeviceAdded.connect(device_added_command)
+        self.device_info_manager.DeviceRemoved.connect(device_removed_command)
+        
+        self.gamepad_device = self.find_gamepad_by_name() 
+        if self.gamepad_device != None:
+            device_added_command(None)
 
     def is_steam_running(self):
         for proc in psutil.process_iter(['name']):
@@ -227,8 +250,8 @@ class SteamWatcher:
                 return True
         return False
     
-    def find_gamepad_by_name(self, printer: Printer):
-        printer.print_every("Finding gamepad by name")
+    def find_gamepad_by_name(self):
+        print("Finding gamepad by name")
         devices = [evdev.InputDevice(device) for device in evdev.list_devices()]
         for device in devices:
             print(f"Found device '{device.name}'")
@@ -237,31 +260,28 @@ class SteamWatcher:
         return None
     
     def watch_keys(self):
-        printer = Printer()
-        while True:
-            try:
-                gamepad_device = self.find_gamepad_by_name(printer)
-                if not gamepad_device:
-                        raise Exception(f"Gamepad device {default_gamepad_name} not found")  
-                print(f"Found gamepad device path '{gamepad_device}'")
-                for event in gamepad_device.read_loop():
-                    if event.code == evdev.ecodes.BTN_MODE and event.value == 1:
-                        print(f"Gamepad key pressed {evdev.categorize(event)}")
-                        if not self.is_steam_running():
-                            self.commamd_runner.start_steam()
+        try:
+            self.gamepad_device = self.find_gamepad_by_name()    
+            if not self.gamepad_device:
+                    raise Exception(f"Gamepad device {default_gamepad_name} not found")  
+            print(f"Found gamepad device path '{self.gamepad_device}'")
+            for event in self.gamepad_device.read_loop():
+                if event.code == evdev.ecodes.BTN_MODE and event.value == 1:
+                    print(f"Gamepad key pressed {evdev.categorize(event)}")
+                    if not self.is_steam_running():
+                        self.commamd_runner.start_steam()
+                    else:
+                        print("Steam already started")
+                if event.code == evdev.ecodes.BTN_NORTH and event.value == 1:
+                    if evdev.ecodes.BTN_SELECT in self.gamepad_device.active_keys():
+                        print(f"Gamepad key pressed {evdev.categorize(event)} with active BTN_SELECT")
+                        if  self.commamd_runner.is_active_display(default_main_screen):
+                            self.commamd_runner.switch_to_second_display()
                         else:
-                            print("Steam already started")
-                    if event.code == evdev.ecodes.BTN_NORTH and event.value == 1:
-                        if evdev.ecodes.BTN_SELECT in gamepad_device.active_keys():
-                            print(f"Gamepad key pressed {evdev.categorize(event)} with active BTN_SELECT")
-                            if  self.commamd_runner.is_active_display(default_main_screen):
-                                self.commamd_runner.switch_to_second_display()
-                            else:
-                                self.commamd_runner.switch_to_first_display()
-            except Exception as e:
-                printer.print_every(f"Keys scan error {str(e)}")
-                time.sleep(gamepad_rescan_sec)
-                
+                            self.commamd_runner.switch_to_first_display()
+        except Exception as e:
+            self.printer.print_every(f"Connection error {str(e)}")
+
     def is_steam_main_window(self,class_name):
         return class_name == 'Steam'
 
@@ -278,12 +298,14 @@ class SteamWatcher:
                 if self.is_steam_main_window(instance_class_name) and self.last_time_window != instance_class_name and self.commamd_runner.is_active_display(default_main_screen):
                     print("Opened main steam window on main display")
                     opened_window.activate(True)
-                    # opened_window.maximize ()
+                    opened_window.maximize ()
                 if self.is_steam_big_picture_window(instance_class_name) and self.last_time_window != instance_class_name:
                     print("Opened Big Picture steam window")
+                    self.commamd_runner.switch_to_second_display()
                     opened_window.activate(True)
                     # opened_window.make_above()
-                    # opened_window.set_fullscreen(True)
+                    opened_window.maximize()
+                    opened_window.set_fullscreen(True)
                 self.last_time_window = instance_class_name
         
         def do_window_closed(this_screen: Wnck.Screen, closed_window: Wnck.Window):
@@ -459,7 +481,7 @@ class DeviceProperties:
         return f"Name {self.name} adapter {self.adapter} address {self.address} paired {is_paired} connected {is_connected} subscribed {self.subscribed}"
 
 def main():
-    print("Press gamepad button X (north) to switch between displays and sound sources")
+    print("Press gamepad button X (north) + select to switch between displays and sound sources")
     print("Press gamepad button PS (mode) to start steam if it is not started")
     print()
     print()
@@ -471,12 +493,19 @@ def main():
     dbus = pydbus.SystemBus()
     upower_manager = dbus.get('org.freedesktop.UPower', '/org/freedesktop/UPower')
     Indicator(dbus,upower_manager)
-    SteamWatcher()
+    SteamWatcher(dbus,upower_manager)
     GamepadWatcher(0,dbus)
     GamepadWatcher(1,dbus)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     gtk.main()
 
-# Проверяем, является ли данный файл основным исполняемым файлом
 if __name__ == "__main__":
     main()
+
+
+#добавить включение выключение экранов с геймпада левая кнопка включает первый экран, правая второй и выключают, по отдельности
+#добавить включение выключение экранов с доп кнопок мышки 
+#запуск отдельной панели на втором экране gnome-panel --display=:0.1 &
+#lsusb -t далее шина, порт корневого хаба, порт хаба подключения echo -1 /sys/bus/usb/devices/1-2.2/power/autosuspend_delay_ms
+#echo -1 > /sys/bus/usb/devices/3-4/power/autosuspend_delay_ms
+#echo -1 > /sys/bus/usb/devices/1-2.2/power/autosuspend_delay_ms
