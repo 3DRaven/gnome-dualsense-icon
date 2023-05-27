@@ -252,7 +252,6 @@ class SteamWatcher:
         return False
     
     def find_gamepad_by_name(self):
-        print("Finding gamepad by name")
         devices = [evdev.InputDevice(device) for device in evdev.list_devices()]
         for device in devices:
             print(f"Found device '{device.name}'")
