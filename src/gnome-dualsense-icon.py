@@ -155,6 +155,7 @@ class Indicator:
     def subscribe_to_devices(self):
         for device_path in self.device_info_manager.EnumerateDevices():
             device = self.dbus.get('org.freedesktop.UPower', device_path)
+            print(f"Power data for device {device.Model} with path {device_path}")
             if self.default_gamepad_name in device.Model:
                 def command(external_self,properties,array):
                     self.update_status(properties,array)
@@ -380,6 +381,7 @@ class GamepadWatcher():
                 device_props = device_info['org.bluez.Device1']
                 if  'Name' in device_props:
                     device_name = device_props['Name']
+                    print(f"Found bluetooth device {device_name}")
                     if default_gamepad_name in device_name:
                         return  DeviceProperties(self.dbus,device_path)
         return None
