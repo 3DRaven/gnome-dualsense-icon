@@ -36,8 +36,10 @@ command_sound_to_second = f"pactl set-default-sink \"{default_sink_for_games}\""
 command_sound_to_first = f"pactl set-default-sink \"{default_sink_for_work}\""
 #switching displays commands
 command_display_second_on = f"xrandr --output {default_tv_screen} --mode {default_tv_resolution} --scale {default_tv_scale} --primary --crtc 0"
+command_display_second_on_not_primary = f"xrandr --output {default_tv_screen} --mode {default_tv_resolution} --scale {default_tv_scale} --crtc 0"
 command_display_second_off = f"xrandr --output {default_tv_screen} --off"
 command_display_first_on = f"xrandr --output {default_main_screen} --mode {default_main_resolution} --scale {default_main_scale} --primary --crtc 0"
+command_display_first_on_not_primary = f"xrandr --output {default_main_screen} --mode {default_main_resolution} --scale {default_main_scale} --crtc 0"
 command_display_first_off = f"xrandr --output {default_main_screen} --off"
 #start steam in old big picture mode, because new big picture has some glitches
 command_steam_start = "env GDK_SCALE=2 /usr/bin/steam -silent -oldbigpicture"
@@ -66,8 +68,18 @@ class CommandsRunner:
             print(f"Waiting for turning {display_name} display on")
             loop = 0
             while True:
-                if self.is_active_display(display_name) or loop > max_wait_sec:
+                if self.is_display_enabled(display_name) or loop > max_wait_sec:
                     print(f"Display {display_name} on")
+                    break
+                time.sleep(1)
+                loop = loop + 1
+    
+    def wait_display_off(self,max_wait_sec,display_name):
+            print(f"Waiting for turning {display_name} display off")
+            loop = 0
+            while True:
+                if not self.is_display_enabled(display_name) or loop > max_wait_sec:
+                    print(f"Display {display_name} off")
                     break
                 time.sleep(1)
                 loop = loop + 1
@@ -109,16 +121,46 @@ class CommandsRunner:
         print("Switching sound to second device")
         self.run_and_wait(command_sound_to_second)
         self.center_mouse_cursor()
+
+    def turn_on_second_display(self):
+        print("Turn on second display")
+        self.run_and_wait(command_display_second_on_not_primary)
+        self.wait_display_on(waiting_display_on_sec,default_tv_screen)
+
+    def turn_off_second_display(self):
+        print("Turn on second display")
+        self.run_and_wait(command_display_second_off)
+        self.wait_display_off(waiting_display_on_sec,default_tv_screen)
+
+    def turn_on_first_display(self):
+        print("Turn on first display")
+        self.run_and_wait(command_display_first_on_not_primary)
+        self.wait_display_on(waiting_display_on_sec,default_main_screen)
     
+    def turn_off_first_display(self):
+        print("Turn on first display")
+        self.run_and_wait(command_display_first_off)
+        self.wait_display_on(waiting_display_on_sec,default_main_screen)
+        
     def start_steam(self): 
         print("Starting steam")
         self.steam_process = self.just_run(command_steam_start)
 
-    def is_active_display(self,display_name):
+    def is_primary_display(self,display_name):
         active_monitor_model = Gdk.Display.get_default().get_primary_monitor().get_model()
         print(f"Active monitor model {active_monitor_model}")
         return active_monitor_model == display_name
-
+    
+    def is_display_enabled(self,display_name):
+        display = Gdk.Display.get_default()
+        for index in range(0,display.get_n_monitors()):
+            monitor = display.get_monitor(index)
+            model = monitor.get_model()
+            print(f"Found monitor {model}")
+            if model != None and display_name in model:
+                return True
+        return False            
+    
 class Indicator:
     def __init__(self, dbus: pydbus.SystemBus, device_info_manager, default_icon_name: str = 'input-gaming', default_battery_percentage:str = '--', default_battery_state: str = '?', default_gamepad_name: str = 'Wireless Controller'):
         self.dbus: pydbus.SystemBus = dbus
@@ -266,6 +308,7 @@ class SteamWatcher:
                     raise Exception(f"Gamepad device {default_gamepad_name} not found")  
             print(f"Found gamepad device path '{self.gamepad_device}'")
             for event in self.gamepad_device.read_loop():
+                # print(f"Gamepad key pressed {evdev.categorize(event)}")
                 if event.code == evdev.ecodes.BTN_MODE and event.value == 1:
                     print(f"Gamepad key pressed {evdev.categorize(event)}")
                     if not self.is_steam_running():
@@ -275,10 +318,25 @@ class SteamWatcher:
                 if event.code == evdev.ecodes.BTN_NORTH and event.value == 1:
                     if evdev.ecodes.BTN_SELECT in self.gamepad_device.active_keys():
                         print(f"Gamepad key pressed {evdev.categorize(event)} with active BTN_SELECT")
-                        if  self.commamd_runner.is_active_display(default_main_screen):
+                        if  self.commamd_runner.is_primary_display(default_main_screen):
                             self.commamd_runner.switch_to_second_display()
                         else:
                             self.commamd_runner.switch_to_first_display()
+                if event.code == evdev.ecodes.BTN_WEST and event.value == 1:
+                    if evdev.ecodes.BTN_SELECT in self.gamepad_device.active_keys():
+                        print(f"Gamepad key pressed {evdev.categorize(event)} with active BTN_SELECT")
+                        if  self.commamd_runner.is_display_enabled(default_main_screen):
+                            self.commamd_runner.turn_off_first_display()
+                        else:
+                            self.commamd_runner.turn_on_first_display()
+                if event.code == evdev.ecodes.BTN_EAST and event.value == 1:
+                    if evdev.ecodes.BTN_SELECT in self.gamepad_device.active_keys():
+                        print(f"Gamepad key pressed {evdev.categorize(event)} with active BTN_SELECT")
+                        if  self.commamd_runner.is_display_enabled(default_tv_screen):  
+                            self.commamd_runner.turn_off_second_display()
+                        else:
+                            self.commamd_runner.turn_on_second_display()
+
         except Exception as e:
             self.printer.print_every(f"Connection error {str(e)}")
 
@@ -295,7 +353,7 @@ class SteamWatcher:
         
         def do_window_opened(this_screen: Wnck.Screen, opened_window: Wnck.Window):
                 instance_class_name = opened_window.get_class_instance_name()
-                if self.is_steam_main_window(instance_class_name) and self.last_time_window != instance_class_name and self.commamd_runner.is_active_display(default_main_screen):
+                if self.is_steam_main_window(instance_class_name) and self.last_time_window != instance_class_name and self.commamd_runner.is_primary_display(default_main_screen):
                     print("Opened main steam window on main display")
                     opened_window.activate(True)
                     opened_window.maximize ()
@@ -314,7 +372,7 @@ class SteamWatcher:
                     print("Closed main steam window")
                 if self.is_steam_big_picture_window(instance_class_name):
                     print("Closed Big Picture steam window")
-                if self.is_steam_big_picture_window(instance_class_name) and self.commamd_runner.is_active_display(default_tv_screen):
+                if self.is_steam_big_picture_window(instance_class_name) and self.commamd_runner.is_primary_display(default_tv_screen):
                     print("Big Picture steam window closed on second display")
                     self.commamd_runner.switch_to_first_display()
                     
