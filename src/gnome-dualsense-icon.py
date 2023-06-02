@@ -18,31 +18,40 @@ from threading import Thread
 import re
 import pydbus #apt-get install python3-pydbus 
 
-waiting_display_on_sec=10 #waiting to turning on second display time
+waiting_display_on_sec=300 #waiting to turning on second display time
 gamepad_rescan_sec=3 #reconnection to gamepad time and key pressed scanner restart time
+#DBus interface to set display parameters in Gnome (it is really work method that can change UI scale)
+display_config_well_known_name = "org.gnome.Mutter.DisplayConfig"
+display_config_object_path = "/org/gnome/Mutter/DisplayConfig"
 
 default_gamepad_name = 'Wireless Controller' #gamepad name for connected bluetooth gamepad
 default_sink_for_games = "alsa_output.pci-0000_01_00.1.hdmi-stereo" #sound ouput device for second display
 default_sink_for_work = "alsa_output.usb-Audeze_Inc_Audeze_Maxwell_Dongle_0000000000000000-01.iec958-stereo" #sound output device for first display
 default_tv_screen="HDMI-0" #secondary display for games
-default_tv_resolution="1920x1080" #secondary display resolution
-default_tv_scale="1x1" #secondary display scale
+default_tv_resolution_width=1920
+default_tv_resolution_height=1080 #secondary display resolution
+default_tv_scale=1 #secondary display scale
 default_main_screen="DP-4" #first display name
-default_main_resolution="2560x1600" #first display resolution
-default_main_scale="1.5x1.5" #first display scale
+#first display resolution
+default_main_resolution_width=2560
+default_main_resolution_height=1600 
+default_main_scale=1.5 #first display scale, and need to set gnome scale to 200% in settings
 
 #for change sound output to second display
 command_sound_to_second = f"pactl set-default-sink \"{default_sink_for_games}\""
 command_sound_to_first = f"pactl set-default-sink \"{default_sink_for_work}\""
 #switching displays commands
-command_display_second_on = f"xrandr --output {default_tv_screen} --mode {default_tv_resolution} --scale {default_tv_scale} --primary --crtc 0"
-command_display_second_on_not_primary = f"xrandr --output {default_tv_screen} --mode {default_tv_resolution} --scale {default_tv_scale} --crtc 0"
+command_display_second_on = f"xrandr --output {default_tv_screen} --mode {default_tv_resolution_width}x{default_tv_resolution_height} --primary --crtc 0"
+command_display_second_on_not_primary = f"xrandr --output {default_tv_screen} --mode {default_tv_resolution_width}x{default_tv_resolution_height} --crtc 0"
 command_display_second_off = f"xrandr --output {default_tv_screen} --off"
-command_display_first_on = f"xrandr --output {default_main_screen} --mode {default_main_resolution} --scale {default_main_scale} --primary --crtc 0"
-command_display_first_on_not_primary = f"xrandr --output {default_main_screen} --mode {default_main_resolution} --scale {default_main_scale} --crtc 0"
+command_display_first_on = f"xrandr --output {default_main_screen} --mode {default_main_resolution_width}x{default_main_resolution_height} --primary --crtc 0"
+command_display_first_on_not_primary = f"xrandr --output {default_main_screen} --mode {default_main_resolution_width}x{default_main_resolution_height} --crtc 0"
 command_display_first_off = f"xrandr --output {default_main_screen} --off"
+# command_display_first_set_gnome_ui_scale = f"gsettings set org.gnome.desktop.interface text-scaling-factor 1 && gsettings set org.gnome.desktop.interface scaling-factor 1"
 #start steam in old big picture mode, because new big picture has some glitches
 command_steam_start = "env GDK_SCALE=2 /usr/bin/steam -silent -oldbigpicture"
+
+print(command_display_first_on)
 
 class Printer:
     def __init__(self) -> None:
@@ -55,16 +64,17 @@ class Printer:
 class CommandsRunner:
     def __init__(self):
         self.steam_process = None
-        pass
-
+        self.display_configurator = DisplayConfigurator()
+    
     def run_and_wait(self,command):
             print(f"Run and wait command {command}")
             return subprocess.Popen(command, shell=True).wait()
+            
     def just_run(self,command):
         print(f"Run command {command}")
         return subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def wait_display_on(self,max_wait_sec,display_name):
+    def wait_display_on(self,max_wait_sec,display_name,display_func):
             print(f"Waiting for turning {display_name} display on")
             loop = 0
             while True:
@@ -72,9 +82,10 @@ class CommandsRunner:
                     print(f"Display {display_name} on")
                     break
                 time.sleep(1)
+                display_func()
                 loop = loop + 1
     
-    def wait_display_off(self,max_wait_sec,display_name):
+    def wait_display_off(self,max_wait_sec,display_name,display_func):
             print(f"Waiting for turning {display_name} display off")
             loop = 0
             while True:
@@ -82,6 +93,7 @@ class CommandsRunner:
                     print(f"Display {display_name} off")
                     break
                 time.sleep(1)
+                display_func()
                 loop = loop + 1
     
     def list_audio_sinks(self):
@@ -96,27 +108,34 @@ class CommandsRunner:
     def center_mouse_cursor(self):
         def command():
             print("Centering mouse cursor")
-            screen = Wnck.Screen.get_default()
+            primary_monitor = Gdk.Display.get_default().get_primary_monitor()
+            scale_factor = primary_monitor.get_scale_factor()
+            monitor_size = Gdk.Display.get_default().get_primary_monitor().get_geometry()
+            print(f"Current legacy Gnome monitor scale {scale_factor} size width {monitor_size.width} height {monitor_size.height}")
             #for preventing some glitches with side pannels and mouse in new screen and resolution
-            self.run_and_wait(f"xdotool mousemove {screen.get_width()//2} {screen.get_height()//2}")
-        GLib.idle_add( command , priority=GLib.PRIORITY_DEFAULT)    
+            #look at https://wilfredwee.github.io/entry/how-to-xrandr for description of problems of difference scale in xrands and Gdk
+            #but we steel use this geometry as base, it works, we do not need really center mouse cursor
+            self.run_and_wait(f"xdotool mousemove {monitor_size.width*scale_factor//2} {monitor_size.height*scale_factor//2}")
+        GLib.idle_add( command , priority=GLib.PRIORITY_DEFAULT)
 
     def switch_to_first_display(self):
         print("Switch to first display")
         # off first because some windows size will be resized for new one display automatically
-        self.run_and_wait(command_display_second_off)
-        self.run_and_wait(command_display_first_on)
-        self.wait_display_on(waiting_display_on_sec,default_main_screen)
+        self.display_configurator.remember_scale_for_tv_screen()
+        self.wait_display_off(waiting_display_on_sec,default_tv_screen,lambda: self.run_and_wait(command_display_second_off))
+        self.wait_display_on(waiting_display_on_sec,default_main_screen,lambda: self.run_and_wait(command_display_first_on))
+        self.display_configurator.restore_main_screen_scale()
         print("Moving sound to first output device")
         self.run_and_wait(command_sound_to_first)
-
+        self.center_mouse_cursor()
 
     def switch_to_second_display(self):
         print("Switch to second display")
         # off first because some windows size will be resized for new one display automatically
-        self.run_and_wait(command_display_first_off)
-        self.run_and_wait(command_display_second_on)
-        self.wait_display_on(waiting_display_on_sec,default_tv_screen)
+        self.display_configurator.remember_scale_for_main_screen()
+        self.wait_display_off(waiting_display_on_sec,default_main_screen,lambda: self.run_and_wait(command_display_first_off))
+        self.wait_display_on(waiting_display_on_sec,default_tv_screen,lambda: self.run_and_wait(command_display_second_on))
+        self.display_configurator.restore_tv_screen_scale()
         self.list_audio_sinks()
         print("Switching sound to second device")
         self.run_and_wait(command_sound_to_second)
@@ -124,23 +143,23 @@ class CommandsRunner:
 
     def turn_on_second_display(self):
         print("Turn on second display")
-        self.run_and_wait(command_display_second_on_not_primary)
-        self.wait_display_on(waiting_display_on_sec,default_tv_screen)
+        self.wait_display_on(waiting_display_on_sec,default_tv_screen,lambda: self.run_and_wait(command_display_second_on_not_primary))
+        self.display_configurator.restore_tv_screen_scale()
 
     def turn_off_second_display(self):
-        print("Turn on second display")
-        self.run_and_wait(command_display_second_off)
-        self.wait_display_off(waiting_display_on_sec,default_tv_screen)
+        print("Turn off second display")
+        self.display_configurator.remember_scale_for_tv_screen()
+        self.wait_display_off(waiting_display_on_sec,default_tv_screen,lambda: self.run_and_wait(command_display_second_off))
 
     def turn_on_first_display(self):
         print("Turn on first display")
-        self.run_and_wait(command_display_first_on_not_primary)
-        self.wait_display_on(waiting_display_on_sec,default_main_screen)
-    
+        self.wait_display_on(waiting_display_on_sec,default_main_screen,lambda: self.run_and_wait(command_display_first_on_not_primary))
+        self.display_configurator.restore_main_screen_scale()
+
     def turn_off_first_display(self):
-        print("Turn on first display")
-        self.run_and_wait(command_display_first_off)
-        self.wait_display_on(waiting_display_on_sec,default_main_screen)
+        print("Turn off first display")
+        self.display_configurator.remember_scale_for_main_screen()
+        self.wait_display_on(waiting_display_on_sec,default_main_screen,lambda: self.run_and_wait(command_display_first_off))
         
     def start_steam(self): 
         print("Starting steam")
@@ -148,18 +167,18 @@ class CommandsRunner:
 
     def is_primary_display(self,display_name):
         active_monitor_model = Gdk.Display.get_default().get_primary_monitor().get_model()
-        print(f"Active monitor model {active_monitor_model}")
+        print(f"Primary monitor model {active_monitor_model} expected {display_name}")
         return active_monitor_model == display_name
     
     def is_display_enabled(self,display_name):
-        display = Gdk.Display.get_default()
+        display = Gdk.Display.get_default() #Gdk and X11 have Screen it is virtual surface, Display it is same as Screen and multiple Monitor-s it is real monitors placed on virtual Screen-Display 
         for index in range(0,display.get_n_monitors()):
             monitor = display.get_monitor(index)
             model = monitor.get_model()
             print(f"Found monitor {model}")
             if model != None and display_name in model:
                 return True
-        return False            
+        return False
     
 class Indicator:
     def __init__(self, dbus: pydbus.SystemBus, device_info_manager, default_icon_name: str = 'input-gaming', default_battery_percentage:str = '--', default_battery_state: str = '?', default_gamepad_name: str = 'Wireless Controller'):
@@ -539,28 +558,104 @@ class DeviceProperties:
         is_connected = self.is_connected()
         return f"Name {self.name} adapter {self.adapter} address {self.address} paired {is_paired} connected {is_connected} subscribed {self.subscribed}"
 
-def main():
-    print("Press gamepad button X (north) + select to switch between displays and sound sources")
-    print("Press gamepad button PS (mode) to start steam if it is not started")
-    print()
-    print()
-    #commands for introspect bluetooth dbus from command line
-    # gdbus introspect --system --dest org.bluez --object-path /org/bluez
-    # gdbus introspect --system --dest org.bluez --object-path /
-    # gdbus introspect --system --dest org.bluez --object-path /org/bluez/hci0
+class DisplayConfigurator:
+    def __init__(self):
+        self.dbus = pydbus.SessionBus()
+        self.path = display_config_object_path
+        self.last_main_screen_scale = default_main_scale
+        self.last_tv_screen_scale = default_tv_scale
 
-    dbus = pydbus.SystemBus()
-    upower_manager = dbus.get('org.freedesktop.UPower', '/org/freedesktop/UPower')
-    Indicator(dbus,upower_manager)
-    SteamWatcher(dbus,upower_manager)
-    GamepadWatcher(0,dbus)
-    GamepadWatcher(1,dbus)
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
-    gtk.main()
+    def remember_scale_for_main_screen(self):
+        self.last_main_screen_scale = self.get_scale(default_main_screen)
+
+    def remember_scale_for_tv_screen(self):
+        self.last_tv_screen_scale = self.get_scale(default_tv_screen)
+
+    def restore_main_screen_scale(self):
+        print(f"Restore main display {default_main_screen} scale {self.last_main_screen_scale}")
+        self.set_scale(default_main_screen,self.last_main_screen_scale)
+
+    def restore_tv_screen_scale(self):
+        print(f"Restore main display {default_tv_screen} scale {self.last_tv_screen_scale}")
+        self.set_scale(default_tv_screen,self.last_tv_screen_scale)
+        
+    def find_nearest_value(self,array, target):
+        return min(array, key=lambda x: abs(x - target))
+    
+    def get_scale(self,display_name):
+        display_config_proxy = self.dbus.get(display_config_well_known_name, display_config_object_path)
+        serial, physical_monitors, logical_monitors, properties = display_config_proxy.GetCurrentState()
+        for x, y, scale, transform, primary, linked_monitors_info, props in logical_monitors:
+            print("Logical monitors params: ",x, y, scale, transform, primary, linked_monitors_info, props)
+            for linked_monitor_connector, linked_monitor_vendor, linked_monitor_product, linked_monitor_serial in linked_monitors_info:
+                print("Linked monitors:",linked_monitor_connector, linked_monitor_vendor, linked_monitor_product, linked_monitor_serial)
+                if display_name in linked_monitor_connector:
+                    print(f"Found scale {scale} for display {display_name}")
+                    return scale
+        print(f"Scale for display {display_name} not found")
+        return None
+    # https://github.com/jadahl/gnome-monitor-config/blob/master/src/org.gnome.Mutter.DisplayConfig.xml
+    # https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/2448
+    def set_scale(self,display_name,adjusted_scale):
+        display_config_proxy = self.dbus.get(display_config_well_known_name, display_config_object_path)
+        serial, physical_monitors, logical_monitors, properties = display_config_proxy.GetCurrentState()
+        updated_logical_monitors=[]
+        for x, y, scale, transform, primary, linked_monitors_info, props in logical_monitors:
+            print("Logical monitors params: ",x, y, scale, transform, primary, linked_monitors_info, props)
+            physical_monitors_config = []
+            for linked_monitor_connector, linked_monitor_vendor, linked_monitor_product, linked_monitor_serial in linked_monitors_info:
+                print("Linked monitors:",linked_monitor_connector, linked_monitor_vendor, linked_monitor_product, linked_monitor_serial)
+                for monitor_info, monitor_modes, monitor_properties in physical_monitors:
+                    print("Monitor properties:",monitor_properties)
+                    monitor_connector, monitor_vendor, monitor_product, monitor_serial = monitor_info
+                    # print("Monitor connector:",monitor_connector, monitor_vendor, monitor_product, monitor_serial)
+                    if linked_monitor_connector == monitor_connector:
+                        for mode_id, mode_width, mode_height, mode_refresh, mode_preferred_scale, mode_supported_scales, mode_properties in monitor_modes:
+                            # print("Mode id:",mode_id, mode_width, mode_height, mode_refresh, mode_preferred_scale, mode_properties)
+                            if mode_properties.get("is-current", False): # ( mode_properties provides is-current, is-preferred, is-interlaced, and more)
+                                physical_monitors_config.append((monitor_connector, mode_id, {}))
+                                if monitor_connector == display_name:
+                                    adjusted_scale = self.find_nearest_value(mode_supported_scales,adjusted_scale)
+                                    if adjusted_scale not in mode_supported_scales:
+                                        print("Error: " + monitor_properties.get("display-name") + " doesn't support that scaling value! (" + str(adjusted_scale) + ")")
+                                    else:
+                                        print("Setting scaling of: " + monitor_properties.get("display-name") + " to " + str(adjusted_scale) + "!")
+            if any(display_name in item[0] for item in physical_monitors_config):
+                print(f"Set scale {adjusted_scale} for display {display_name}")
+                final_scale = adjusted_scale
+            else:
+                final_scale = scale
+            updated_logical_monitor_struct = (x, y, final_scale, transform, primary, physical_monitors_config)
+            updated_logical_monitors.append(updated_logical_monitor_struct)
+
+        properties_to_apply = { "layout_mode": pydbus.Variant('s',str(properties.get("layout-mode")))}
+        method = 1 # 2 means show a prompt before applying settings; 1 means instantly apply settings without prompt
+        display_config_proxy.ApplyMonitorsConfig(serial, method, updated_logical_monitors, properties_to_apply)
+
+def main():
+    try:
+        print("Press gamepad button X (north) + select to switch between displays and sound sources")
+        print("Press gamepad button PS (mode) to start steam if it is not started")
+        print()
+        print()
+        #commands for introspect bluetooth dbus from command line
+        # gdbus introspect --system --dest org.bluez --object-path /org/bluez
+        # gdbus introspect --system --dest org.bluez --object-path /
+        # gdbus introspect --system --dest org.bluez --object-path /org/bluez/hci0
+        dbus = pydbus.SystemBus()
+        upower_manager = dbus.get('org.freedesktop.UPower', '/org/freedesktop/UPower')
+        Indicator(dbus,upower_manager)
+        SteamWatcher(dbus,upower_manager)
+        GamepadWatcher(0,dbus)
+        GamepadWatcher(1,dbus)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        gtk.main()
+    except Exception as e:
+        print(f"Error {str(e)}")
+        dbus.disconnect()    
 
 if __name__ == "__main__":
     main()
-
 
 #поменять просто включение/выключение на раскладку экранов с размещением
 #если включен второй и пытаются включить первый, то он должен быть слева от второго и наоборот. При этом primary дисплей надо сохранять тем, который есть в данный момент.
@@ -570,3 +665,6 @@ if __name__ == "__main__":
 #lsusb -t далее шина, порт корневого хаба, порт хаба подключения echo -1 /sys/bus/usb/devices/1-2.2/power/autosuspend_delay_ms
 #echo -1 > /sys/bus/usb/devices/3-4/power/autosuspend_delay_ms
 #echo -1 > /sys/bus/usb/devices/1-2.2/power/autosuspend_delay_ms
+
+#Wnc имеет задержки по определению разрешения текущего примари дисплея или неверно определяет его
+#некоторые приложения используют эту настройку для масштабиролвания интерфейса gsettings get org.gnome.desktop.interface scaling-factor
